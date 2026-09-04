@@ -1,4 +1,4 @@
-# Edge AI Motor Fault Detection — STM32F446RE
+# TinyML Motor Fault Detection for Predictive Maintenance — STM32F446RE
 
 Real-time vibration-based fault classification on a bare-metal / FreeRTOS
 embedded target, with a flash-budget-aware Random Forest trained offline
