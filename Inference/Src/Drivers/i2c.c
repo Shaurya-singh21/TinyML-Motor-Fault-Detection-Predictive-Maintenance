@@ -2,10 +2,18 @@
 #include "main.h"
 #include "i2c.h"
 
+static inline int i2c_wait_sr1(uint32_t mask, uint32_t timeout)
+{
+	while (!(I2C1->SR1 & mask))
+	{
+		if (--timeout == 0U)
+			return -1;
+	}
+	return 0;
+}
+
 void i2c2_oled_init(void)
 {
-	// 1. Manual Bus Recovery (Frees the stuck OLED)
-	// Configure PB10/PB11 as standard GPIO outputs temporarily
 	GPIOB->MODER &= ~(GPIO_MODER_MODER10 | GPIO_MODER_MODER11);
 	GPIOB->MODER |= (1U << GPIO_MODER_MODER10_Pos) | (1U << GPIO_MODER_MODER11_Pos);
 	GPIOB->OTYPER |= (GPIO_OTYPER_OT_10 | GPIO_OTYPER_OT_11); // Open Drain
@@ -115,43 +123,60 @@ void i2c_init(void)
 extern volatile uint8_t *current_dma_buffer;
 extern volatile uint16_t sample_count;
 
-void I2C_WriteReg(uint8_t reg, uint8_t data)
+int I2C_WriteReg(uint8_t reg, uint8_t data)
 {
 	I2C1->CR1 |= I2C_CR1_START;
-	while (!(I2C1->SR1 & I2C_SR1_SB))
-		;
+	if (i2c_wait_sr1(I2C_SR1_SB, I2C_FLAG_TIMEOUT) < 0)
+	{
+		I2C1->CR1 |= I2C_CR1_STOP;
+		return -1;
+	}
 
 	I2C1->DR = 0xD0; // Write Address
-	while (!(I2C1->SR1 & I2C_SR1_ADDR))
-		;
+	if (i2c_wait_sr1(I2C_SR1_ADDR, I2C_FLAG_TIMEOUT) < 0)
+	{
+		I2C1->CR1 |= I2C_CR1_STOP;
+		return -1;
+	}
 
 	(void)I2C1->SR1;
 	(void)I2C1->SR2;
 
 	I2C1->DR = reg;
-	while (!(I2C1->SR1 & I2C_SR1_TXE))
-		;
+	if (i2c_wait_sr1(I2C_SR1_TXE, I2C_FLAG_TIMEOUT) < 0)
+	{
+		I2C1->CR1 |= I2C_CR1_STOP;
+		return -1;
+	}
 
 	I2C1->DR = data;
-	while (!(I2C1->SR1 & I2C_SR1_BTF))
-		;
+	if (i2c_wait_sr1(I2C_SR1_BTF, I2C_FLAG_TIMEOUT) < 0)
+	{
+		I2C1->CR1 |= I2C_CR1_STOP;
+		return -1;
+	}
 
 	I2C1->CR1 |= I2C_CR1_STOP;
+	uint32_t stop_timeout = I2C_FLAG_TIMEOUT;
 	while (I2C1->CR1 & I2C_CR1_STOP)
-		;
+	{
+		if (--stop_timeout == 0U)
+			break;
+	}
+	return 0;
 }
+volatile uint8_t mpu6050_ok = 0;
+
 void MPU6050_Init(void)
 {
-	I2C_WriteReg(0x6B, 0x00); // Wake up
-	stp++;
-	I2C_WriteReg(0x19, 0x00); // SMPLRT_DIV = 0 (1kHz sample rate)
-	stp++;
-	I2C_WriteReg(0x1A, 0x03); // CONFIG: DLPF = 42Hz, sets internal clock to 1kHz
-	stp++;
-	I2C_WriteReg(0x1C, 0x00); // ACCEL_CONFIG: +/- 2g for maximum sensitivity on tiny vibrations
-	stp++;
-	I2C_WriteReg(0x38, 0x01); // INT_ENABLE: Enable Data Ready Interrupt
-	stp++;
+	int status = 0;
+	status |= I2C_WriteReg(0x6B, 0x00); // Wake up
+	status |= I2C_WriteReg(0x19, 0x00); // SMPLRT_DIV = 0 (1kHz sample rate)
+	status |= I2C_WriteReg(0x1A, 0x03); // CONFIG: DLPF = 42Hz, sets internal clock to 1kHz
+	status |= I2C_WriteReg(0x1C, 0x00); // ACCEL_CONFIG: +/- 2g for maximum sensitivity on tiny vibrations
+	status |= I2C_WriteReg(0x38, 0x01); // INT_ENABLE: Enable Data Ready Interrupt
+
+	mpu6050_ok = (status == 0) ? 1U : 0U;
 }
 
 void EXTI9_5_IRQHandler(void)
@@ -165,25 +190,43 @@ void EXTI9_5_IRQHandler(void)
 		}
 		// 1. Manual I2C Setup Phase
 		I2C1->CR1 |= I2C_CR1_START;
-		while (!(I2C1->SR1 & I2C_SR1_SB))
-			;
-		I2C1->DR = 0xD0; // Write Address
-		while (!(I2C1->SR1 & I2C_SR1_ADDR))
-			;
+		if (i2c_wait_sr1(I2C_SR1_SB, I2C_FLAG_TIMEOUT) < 0)
+		{
+			I2C1->CR1 |= I2C_CR1_STOP; // release the bus, drop this cycle
+			return;
+		}
+		I2C1->DR = 0xD0; // Write Adress
+		if (i2c_wait_sr1(I2C_SR1_ADDR, I2C_FLAG_TIMEOUT) < 0)
+		{
+			I2C1->CR1 |= I2C_CR1_STOP;
+			return;
+		}
 		(void)I2C1->SR1;
 		(void)I2C1->SR2;
 
 		I2C1->DR = 0x3B; // Target register (ACCEL_XOUT_H)
-		while (!(I2C1->SR1 & I2C_SR1_TXE))
-			;
-		while (!(I2C1->SR1 & I2C_SR1_BTF))
-			;
+		if (i2c_wait_sr1(I2C_SR1_TXE, I2C_FLAG_TIMEOUT) < 0)
+		{
+			I2C1->CR1 |= I2C_CR1_STOP;
+			return;
+		}
+		if (i2c_wait_sr1(I2C_SR1_BTF, I2C_FLAG_TIMEOUT) < 0)
+		{
+			I2C1->CR1 |= I2C_CR1_STOP;
+			return;
+		}
 		I2C1->CR1 |= I2C_CR1_START; // Repeated Start
-		while (!(I2C1->SR1 & I2C_SR1_SB))
-			;
+		if (i2c_wait_sr1(I2C_SR1_SB, I2C_FLAG_TIMEOUT) < 0)
+		{
+			I2C1->CR1 |= I2C_CR1_STOP;
+			return;
+		}
 		I2C1->DR = 0xD1; // Read Address
-		while (!(I2C1->SR1 & I2C_SR1_ADDR))
-			;
+		if (i2c_wait_sr1(I2C_SR1_ADDR, I2C_FLAG_TIMEOUT) < 0)
+		{
+			I2C1->CR1 |= I2C_CR1_STOP;
+			return;
+		}
 		// 2. Hand over to DMA for the 6-byte payload
 		DMA1_Stream0->M0AR = (uint32_t)&current_dma_buffer[sample_count * 6];
 		DMA1_Stream0->NDTR = 6;
@@ -196,64 +239,3 @@ void EXTI9_5_IRQHandler(void)
 		(void)I2C1->SR2;
 	}
 }
-
-// void EXTI9_5_IRQHandler(void) {
-//     if (EXTI->PR & EXTI_PR_PR5) {
-//         EXTI->PR = EXTI_PR_PR5;
-//
-//         // --- Phase 1: START + Write address (0xD0) ---
-//         I2C1->CR1 |= I2C_CR1_START;
-//         while (!(I2C1->SR1 & I2C_SR1_SB));
-//
-//         I2C1->DR = 0xD0;
-//         while (!(I2C1->SR1 & (I2C_SR1_ADDR | I2C_SR1_AF)));
-//         if (I2C1->SR1 & I2C_SR1_AF) {
-//             I2C1->SR1 &= ~I2C_SR1_AF;
-//             I2C1->CR1 |= I2C_CR1_STOP;
-//             return;
-//         }
-//         (void)I2C1->SR1;
-//         (void)I2C1->SR2;
-//
-//         // --- Phase 2: Write target register (0x3B) ---
-//         I2C1->DR = 0x3B;
-//         while (!(I2C1->SR1 & (I2C_SR1_TXE | I2C_SR1_AF)));
-//         if (I2C1->SR1 & I2C_SR1_AF) {
-//             I2C1->SR1 &= ~I2C_SR1_AF;
-//             I2C1->CR1 |= I2C_CR1_STOP;
-//             return;
-//         }
-//
-//         while (!(I2C1->SR1 & (I2C_SR1_BTF | I2C_SR1_AF)));
-//         if (I2C1->SR1 & I2C_SR1_AF) {
-//             I2C1->SR1 &= ~I2C_SR1_AF;
-//             I2C1->CR1 |= I2C_CR1_STOP;
-//             return;
-//         }
-//
-//         // --- Phase 3: Repeated START + Read address (0xD1) ---
-//         I2C1->CR1 |= I2C_CR1_START;
-//         while (!(I2C1->SR1 & I2C_SR1_SB));
-//
-//         I2C1->DR = 0xD1;
-//         while (!(I2C1->SR1 & (I2C_SR1_ADDR | I2C_SR1_AF)));
-//         if (I2C1->SR1 & I2C_SR1_AF) {
-//             I2C1->SR1 &= ~I2C_SR1_AF;
-//             I2C1->CR1 |= I2C_CR1_STOP;
-//             return;
-//         }
-//
-//         // --- Phase 4: Hand off to DMA for the 6-byte payload ---
-//         // ADDR must be cleared (SR1 then SR2 read) *after* CR2 is armed for DMA,
-//         // per RM0390: clearing ADDR is what releases the clock stretch and lets
-//         // the first data byte start clocking in, so DMAEN/LAST must already be set.
-//         DMA1_Stream0->M0AR = (uint32_t)&current_dma_buffer[sample_count * 6];
-//         DMA1_Stream0->NDTR = 6;
-//         I2C1->CR2 |= I2C_CR2_LAST;
-//         DMA1_Stream0->CR |= DMA_SxCR_EN;
-//         I2C1->CR2 |= I2C_CR2_DMAEN;
-//
-//         (void)I2C1->SR1;
-//         (void)I2C1->SR2;
-//     }
-// }
