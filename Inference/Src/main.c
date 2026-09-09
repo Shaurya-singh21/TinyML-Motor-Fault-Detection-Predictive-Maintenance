@@ -15,9 +15,11 @@
 #include "ssd1306.h"
 #include "math.h"
 #include "stdio.h"
+
 const char *class_labels[4] = {"Bearing Fault", "Healthy", "Imbalance",
 							   "Transient Shock"};
 const float freq_resolution = 1000.0f / (float)SAMPLES_PER_BUFFER;
+extern volatile uint8_t mpu6050_ok;
 typedef struct __attribute__((packed))
 {
 	float features[FEATURE_SIZE];
@@ -41,17 +43,12 @@ void welcome_message(void)
 	oled_print(0, 2, "  DETECTION SYSTEM  ");
 	oled_print(0, 3, "====================");
 	oled_print(0, 4, "Press Button To Start");
-	oled_print(0, 6, "     OR Stop System     ");
+	oled_print(0, 6, "    Or Stop System   ");
 	oled_flush();
 }
 
 uint8_t bufferA[DMA_Buffer_size];
 uint8_t bufferB[DMA_Buffer_size];
-volatile uint8_t busy = 0;
-volatile uint16_t bytes_left;
-volatile uint8_t *ptr;
-volatile char *uart_ptr = NULL;
-volatile uint8_t flag;
 volatile uint8_t power;
 
 volatile uint8_t *current_dma_buffer = bufferA;
@@ -342,6 +339,14 @@ void vDisplayTask(void *pvParameters)
 	}
 }
 
+void show_Ack_failure(void){
+	oled_clear();
+	oled_print(0,0,"   Sensor Not   ");
+	oled_print(0,1,"   Responding   ");
+	oled_print(0,2,"  Reconnect the  ");
+	oled_print(0,3,"     Sensor    ");
+}
+
 int main(void)
 {
 	SCB->CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2));
@@ -355,6 +360,10 @@ int main(void)
 	oled_init();
 	oled_clear();
 	welcome_message();
+	if(!mpu6050_ok){
+		show_Ack_failure();
+		for(;;);
+	}
 	xBufferPtrQueueHandle = xQueueCreate(2, sizeof(uint32_t *));
 	xFeatureQueueHandle = xQueueCreate(2, sizeof(features));
 	xLoggingQueue = xQueueCreate(2, sizeof(FinalInference_t));

@@ -130,8 +130,8 @@ void oled_dma_send(const uint8_t *buf, uint16_t len)
 	DMA1_Stream4->M0AR = (uint32_t)buf;
 	DMA1_Stream4->NDTR = len;
 
-	I2C3->CR2 |= I2C_CR2_DMAEN;
 	DMA1_Stream4->CR |= DMA_SxCR_EN;
+	I2C3->CR2 |= I2C_CR2_DMAEN;
 }
 
 void DMA1_Stream4_IRQHandler(void)

@@ -84,6 +84,7 @@ int oled_cmd(uint8_t cmd)
 	}
 
 	OLED_I2C->CR1 |= I2C_CR1_STOP;
+	return 0;
 }
 
 void oled_init(void)
@@ -161,10 +162,6 @@ void oled_print(int x, int page, const char *s)
 	}
 }
 
-uint8_t oled_is_busy(void)
-{
-	return dma_busy;
-}
 void oled_dma_complete(void)
 {
 	dma_busy = 0;
