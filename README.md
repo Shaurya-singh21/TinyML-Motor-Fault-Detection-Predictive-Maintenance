@@ -15,7 +15,7 @@ Live status is shown on an onboard SSD1306 OLED and mirrored over UART.
 ![scikit-learn](https://img.shields.io/badge/ML-scikit--learn-F7931E?logo=scikitlearn&logoColor=white)
 ![Edge AI](https://img.shields.io/badge/Edge%20AI-Random%20Forest-8E44AD)
 
-> **📷 {IMAGE: Hero shot — wide photo of the full rig: motor, MPU6050 on its mount, STM32 Nucleo board, OLED, wiring and power supply, ideally with the OLED showing a detected condition.}**
+> ![alt text](assets/flowchart.png)
 
 ---
 
@@ -100,7 +100,6 @@ back-pressured and testable.
 | SSD1306 OLED (128×64, I²C) | On-device status display |
 | Motor / fan under test | Machine being monitored |
 | USB–UART (ST-Link VCP) | Data collection, telemetry, debugging |
-| 5 V / motor supply | Motor + board power |
 
 ### Pin map *(extracted from firmware — authoritative)*
 
@@ -120,7 +119,8 @@ back-pressured and testable.
 - **OLED I²C address:** set via `OLED_ADDR` in `ssd1306.h` (not included in this update — confirm it matches your module, typically `0x3C` or `0x3D`)
 - **DMA map:** `DMA1_Stream0 Ch1` = I²C1-RX (sensor) · `DMA1_Stream4 Ch3` = I²C3-TX (OLED) · `DMA1_Stream6 Ch4` = USART2-TX (telemetry)
 
-> **📷 {IMAGE: Wiring close-up — labeled photo of the Nucleo showing the PB8/PB9/PB5 MPU6050 connections, PA8/PC9 OLED connections, and PA2 UART, with the MPU6050 and OLED boards visible.}**
+
+> ![alt text](assets/wiring.jpeg)
 
 ---
 
@@ -249,7 +249,7 @@ prediction = np.frombuffer(raw[60:64], dtype="<i4")[0]
 majority   = np.frombuffer(raw[64:68], dtype="<i4")[0]
 ```
 
-> **📷 {IMAGE: Serial output — screenshot of the decoded UART telemetry (feature values + prediction + majority vote) scrolling in the terminal or notebook.}**
+> >![alt text](assets/uart.png)
 
 ### 3.6 OLED status display
 
@@ -273,7 +273,7 @@ font, then flushes the frame over a **second, independent I²C bus (I²C3)** via
 and error states (`welcome_message()`, `show_Ack_failure()`) use the same framebuffer/flush
 path before the RTOS scheduler or acquisition even starts.
 
-> **📷 {IMAGE: OLED close-up — the four condition screens (Healthy / Bearing Fault / Imbalance / Transient Shock) showing state, confidence, and Z-axis stats.}**
+>![alt text](assets/class.jpeg)
 
 ---
 
@@ -301,7 +301,7 @@ scikit-learn model and the on-device `emlearn` C model, predictions agreed on **
 windows — evidence that the C port faithfully reproduces the trained model, which cleanly
 separates *implementation* bugs from *real* changes in the incoming vibration data.
 
-> **📷 {IMAGE: ML results — the classification report + confusion matrix from the notebook, and optionally the per-class feature boxplots.}**
+> **go to /ML/process_data.ipynb for boxplots and detailed comparison between features.**
 
 ---
 
@@ -463,5 +463,4 @@ model selection · C-code model export (`emlearn`) · Python↔MCU parity valida
 - Hand-written firmware, notebooks, and dataset: © the author — **Shaurya Singh (IIST ECE'28)**
 - Vendored third-party code retains its own license: **ARM CMSIS / CMSIS-DSP** (Apache-2.0),
   **FreeRTOS** (MIT), **emlearn** (MIT).
-
-> **📷 {IMAGE: Final demo — the complete running system, motor spinning, OLED showing the detected condition.}**
+>![alt text](assets/hero_shot.jpeg) | ![alt text](assets/hero-fan.jpeg)
