@@ -81,7 +81,7 @@ flowchart LR
     INF --> UART["🔌 UART telemetry<br/>→ PC"]
 ```
 
-> **📷 {IMAGE: Hardware block diagram — clean schematic-style block diagram of Motor → MPU6050 → STM32 (I²C/DMA/UART) → OLED + PC. Can be hand-drawn or drawn in draw.io.}**
+> ![alt text](assets/ckt_diag.png)
 
 ### Runtime firmware architecture (FreeRTOS)
 
