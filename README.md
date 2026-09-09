@@ -67,20 +67,6 @@ The project has two halves that share **one identical feature-extraction contrac
 offline path that collects data and trains the model, and a runtime path that runs the
 frozen model on the MCU.
 
-```mermaid
-flowchart LR
-    subgraph PHYS["Physical"]
-        M["⚙️ Motor"] --> S["MPU6050<br/>accelerometer"]
-    end
-    subgraph MCU["STM32F446RE"]
-        S -->|"I²C + DMA"| ACQ["Acquisition<br/>128-sample window"]
-        ACQ --> FE["Feature Extraction<br/>CMSIS-DSP → 15 features"]
-        FE --> INF["Random Forest<br/>inference + majority vote"]
-    end
-    INF --> OLED["🖥️ OLED status<br/>(fault, confidence, Z-axis stats)"]
-    INF --> UART["🔌 UART telemetry<br/>→ PC"]
-```
-
 > ![alt text](assets/ckt_diag.png)
 
 ### Runtime firmware architecture (FreeRTOS)
