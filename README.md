@@ -5,6 +5,7 @@ An STM32F446RE samples a motor's vibration with an MPU6050 accelerometer, extrac
 15 time- and frequency-domain features from each 128-sample window using CMSIS-DSP,
 and classifies the motor's mechanical condition with a Random Forest running
 **entirely on the microcontroller** — no host PC and no cloud in the loop at runtime.
+Live status is shown on an onboard SSD1306 OLED and mirrored over UART.
 
 ![STM32](https://img.shields.io/badge/MCU-STM32F446RE-03234B?logo=stmicroelectronics&logoColor=white)
 ![C](https://img.shields.io/badge/Firmware-C%20bare--metal-00599C?logo=c&logoColor=white)
@@ -23,8 +24,9 @@ and classifies the motor's mechanical condition with a Random Forest running
 - **On-device inference** — the Random Forest classifies live vibration windows directly on the Cortex-M4; the PC is only used for data collection, training, and debugging.
 - **4-class condition monitoring** — `Healthy`, `Bearing_Fault`, `Imbalance`, `Transient_Shock`.
 - **Full custom DSP + feature pipeline** — no TFLite-Micro / X-CUBE-AI black box. Features are hand-implemented with CMSIS-DSP and **bit-for-bit matched to the Python training pipeline** (scaling, per-window de-meaning, variance convention, and FFT-magnitude reconstruction all verified against NumPy/SciPy).
-- **FreeRTOS pipeline** — acquisition, feature extraction, inference, and telemetry run as separate tasks connected by queues and ISR-safe notifications.
+- **FreeRTOS pipeline** — acquisition, feature extraction, inference, telemetry, and the OLED display all run as separate tasks connected by queues and ISR-safe notifications.
 - **Zero-copy DMA acquisition** — I²C reads are driven by the sensor's data-ready interrupt straight into a ping-pong buffer via DMA.
+- **On-device OLED status display** — a second, independent I²C bus (I²C3, DMA-flushed) drives an SSD1306 with live fault state, confidence, and Z-axis vibration stats, decoupled from the acquisition/inference path by its own FreeRTOS task and queue.
 - **Deployment-aware model selection** — the training search rejects any forest whose serialized size exceeds the target's flash budget, so the exported model is chosen to be deployable, not just accurate.
 - **Honest, debugged, real-world project** — includes a documented domain-shift investigation (a mechanical mounting change measurably shifted the feature distribution) and a full sensor-to-inference debugging methodology.
 
@@ -75,7 +77,7 @@ flowchart LR
         ACQ --> FE["Feature Extraction<br/>CMSIS-DSP → 15 features"]
         FE --> INF["Random Forest<br/>inference + majority vote"]
     end
-    INF --> OLED["🖥️ OLED status<br/>(planned)"]
+    INF --> OLED["🖥️ OLED status<br/>(fault, confidence, Z-axis stats)"]
     INF --> UART["🔌 UART telemetry<br/>→ PC"]
 ```
 
@@ -87,33 +89,6 @@ Every stage is decoupled: hardware events happen in short ISRs, and all the real
 done in tasks that communicate through queues. This keeps the ISRs short and the pipeline
 back-pressured and testable.
 
-```mermaid
-flowchart TB
-    subgraph ISR["⚡ Interrupt layer (short, hardware-triggered)"]
-        BTN["EXTI15_10 ISR<br/>user button · PC13"]
-        MPU["EXTI9_5 ISR<br/>MPU6050 data-ready · PB5"]
-        D0["DMA1_Stream0 ISR<br/>I²C1-RX complete"]
-        D6["DMA1_Stream6 ISR<br/>USART2-TX complete"]
-    end
-    subgraph RTOS["🧵 FreeRTOS tasks"]
-        T0["vStartStopSys<br/>arm / disarm acquisition"]
-        T1["vProcessData<br/>de-mean + 15 features"]
-        T2["vRunInference<br/>Random Forest + majority vote"]
-        T3["vSend_via_UART<br/>telemetry"]
-    end
-    BTN -->|"task notify"| T0
-    MPU -->|"triggers 6-byte burst read"| BUS["I²C1 + DMA1_S0"]
-    BUS --> D0
-    D0 -->|"buffer pointer (queue)"| T1
-    T1 -->|"15 floats (queue)"| T2
-    T2 -->|"result struct (queue)"| T3
-    T3 -->|"DMA"| D6
-    D6 --> PC["USART2 → PC / logger"]
-    T2 -.->|"planned"| OLEDT["SSD1306 OLED"]
-```
-
----
-
 ## 🔌 2. Hardware & Wiring
 
 ### Bill of materials
@@ -122,7 +97,7 @@ flowchart TB
 |---|---|
 | STM32F446RE (Nucleo-64) | Main MCU — acquisition, DSP, inference |
 | MPU6050 | 3-axis accelerometer (I²C) |
-| SSD1306 OLED (128×64, I²C) | On-device status display *(integration pending)* |
+| SSD1306 OLED (128×64, I²C) | On-device status display |
 | Motor / fan under test | Machine being monitored |
 | USB–UART (ST-Link VCP) | Data collection, telemetry, debugging |
 | 5 V / motor supply | Motor + board power |
@@ -134,17 +109,18 @@ flowchart TB
 | MPU6050 **SCL** | `PB8` | I²C1_SCL (AF4) | ~400 kHz fast mode |
 | MPU6050 **SDA** | `PB9` | I²C1_SDA (AF4) | open-drain |
 | MPU6050 **INT** | `PB5` | EXTI9_5, input pull-down, **rising** edge | data-ready trigger |
+| OLED **SCL** | `PA8` | I²C3_SCL (AF4) | ~400 kHz fast mode |
+| OLED **SDA** | `PC9` | I²C3_SDA (AF4) | open-drain |
 | UART **TX** | `PA2` | USART2_TX (AF7) | 115200 8N1, via DMA1_S6 |
 | User **button** | `PC13` | EXTI15_10, **falling** edge | start / stop acquisition |
-| **Motor enable** | `PA8` | GPIO output | drives motor relay / FET |
-| System LED | `PA3` | GPIO output | acquisition active |
-| Status LED | `PA5` | GPIO output | buffer / heartbeat |
-| OLED SCL / SDA | `PB10` / `PB11` | I²C2 (AF4) | *planned — currently disabled* |
+| **Motor enable** | `PA9` | GPIO output | toggled in `vStartStopSys` (`BS9`/`BR9`) |
+| Status LED | `PA5` | GPIO output | buffer / heartbeat toggle on each DMA1_Stream0 completion |
 
 - **MPU6050 I²C address:** `0x68` (write `0xD0`, read `0xD1`)
-- **DMA map:** `DMA1_Stream0 Ch1` = I²C1-RX (sensor) · `DMA1_Stream6 Ch4` = USART2-TX (telemetry) · `DMA1_Stream7 Ch7` = I²C2-TX (OLED, planned)
+- **OLED I²C address:** set via `OLED_ADDR` in `ssd1306.h` (not included in this update — confirm it matches your module, typically `0x3C` or `0x3D`)
+- **DMA map:** `DMA1_Stream0 Ch1` = I²C1-RX (sensor) · `DMA1_Stream4 Ch3` = I²C3-TX (OLED) · `DMA1_Stream6 Ch4` = USART2-TX (telemetry)
 
-> **📷 {IMAGE: Wiring close-up — labeled photo of the Nucleo showing the PB8/PB9/PB5 MPU6050 connections and PA2 UART, with the MPU6050 board and motor visible.}**
+> **📷 {IMAGE: Wiring close-up — labeled photo of the Nucleo showing the PB8/PB9/PB5 MPU6050 connections, PA8/PC9 OLED connections, and PA2 UART, with the MPU6050 and OLED boards visible.}**
 
 ---
 
@@ -152,15 +128,17 @@ flowchart TB
 
 ### 3.1 Data acquisition — interrupt-driven, DMA, ping-pong
 
-The MPU6050 is configured for a **1 kHz** data-ready interrupt. Each interrupt kicks off a
-6-byte burst read (`X/Y/Z`, big-endian `int16`) that DMA writes straight into the active
-buffer. When one buffer fills with a full window, its pointer is handed to the processing
-task and the other buffer takes over — a zero-copy ping-pong.
+The MPU6050 is configured for a **1 kHz** data-ready interrupt. Each interrupt starts a
+6-byte burst read (`X/Y/Z`, big-endian `int16`); the START condition, slave address, and
+target-register handshake are done as blocking polled I²C inside the ISR, then the actual
+6-byte payload is handed to DMA, which writes it straight into the active buffer. When one
+buffer fills with a full window, its pointer is handed to the processing task and the other
+buffer takes over — a zero-copy ping-pong for the payload itself.
 
 ```mermaid
 flowchart LR
-    MPU["MPU6050"] -->|"data-ready INT (1 kHz)"| EXTI["EXTI9_5 ISR"]
-    EXTI -->|"6-byte burst read"| DMA["DMA1_Stream0<br/>(I²C1-RX)"]
+    MPU["MPU6050"] -->|"data-ready INT (1 kHz)"| EXTI["EXTI9_5 ISR<br/>(polls START/ADDR handshake)"]
+    EXTI -->|"hands off 6-byte burst"| DMA["DMA1_Stream0<br/>(I²C1-RX)"]
     DMA --> A["Buffer A<br/>128 × 6 B"]
     DMA --> B["Buffer B<br/>128 × 6 B"]
     A -->|"full → enqueue ptr"| P["vProcessData"]
@@ -240,7 +218,8 @@ calls directly. *(Actual flash footprint is measured from the linker `.map` — 
 `vRunInference` runs the forest on each 15-feature vector and returns a class index
 (`0=Bearing_Fault, 1=Healthy, 2=Imbalance, 3=Transient_Shock` — this mapping is fixed and
 must match training). Because a single 128 ms window can be noisy, predictions are stabilized
-by **majority vote** across a short run of windows before the result is reported.
+by **majority vote** across a short run of windows before the result is reported — both over
+UART and, every 10th window, to the OLED.
 
 ```
 Window 1 → Healthy
@@ -271,6 +250,30 @@ majority   = np.frombuffer(raw[64:68], dtype="<i4")[0]
 ```
 
 > **📷 {IMAGE: Serial output — screenshot of the decoded UART telemetry (feature values + prediction + majority vote) scrolling in the terminal or notebook.}**
+
+### 3.6 OLED status display
+
+Every 10th inference window, `vRunInference` packages the majority-vote class, its confidence
+(`hits / 10 × 100`), and the current window's Z-axis RMS and peak-to-peak into a small
+`DisplayPacket_t` and enqueues it to `vDisplayTask` — a dedicated FreeRTOS task, fully
+decoupled from acquisition and inference so a slow display refresh can never stall sampling.
+
+```c
+typedef struct __attribute__((packed)) {
+    float   confidence;
+    int32_t idx;
+    float   PTP_Z;
+    float   RMS_Z;
+} DisplayPacket_t;
+```
+
+`vDisplayTask` renders four lines into a software framebuffer using a hand-rolled 5×8 bitmap
+font, then flushes the frame over a **second, independent I²C bus (I²C3)** via DMA
+(`DMA1_Stream4`), so the OLED write can never contend with the MPU6050's I²C1 traffic. Startup
+and error states (`welcome_message()`, `show_Ack_failure()`) use the same framebuffer/flush
+path before the RTOS scheduler or acquisition even starts.
+
+> **📷 {IMAGE: OLED close-up — the four condition screens (Healthy / Bearing Fault / Imbalance / Transient Shock) showing state, confidence, and Z-axis stats.}**
 
 ---
 
@@ -328,9 +331,6 @@ flowchart LR
     C --> D["Feature distribution shifted"]
     D --> E["Predictions changed<br/>(domain shift, not a code bug)"]
 ```
-
-> **📷 {IMAGE: Mounting comparison — side-by-side photos of the original vs modified sensor mount.}**
-
 ---
 
 ## 🔧 6. Engineering Deep-Dives
@@ -380,7 +380,7 @@ Motor_Fault_Detection/
 ├── .gitignore
 ├── Data_Collection/          # STM32 firmware: acquire + stream raw vibration over UART
 │   ├── Src/  Inc/  Startup/
-├── Inference/                # STM32 firmware: FreeRTOS + CMSIS-DSP + on-device RF
+├── Inference/                # STM32 firmware: FreeRTOS + CMSIS-DSP + on-device RF + OLED
 │   ├── Src/{main.c, Drivers/, CMSIS_DSP/}
 │   ├── Inc/{Header/, include/ (FreeRTOS), CMSIS/}
 │   └── Startup/
@@ -437,24 +437,21 @@ jupyter notebook ML/process_data.ipynb
   out window-level correlation between train and test and harden the generalization estimate.
 - **`Transient_Shock` recall** — the weakest class; needs more/harder examples and possibly
   class weighting.
-- **OLED integration** — driver and DMA path are scaffolded but the display is not yet wired
-  into the runtime (see roadmap below).
 - **Prediction ≠ physical proof** — a class prediction reflects the learned feature
   distribution, not a verified physical fault.
 
-**Roadmap:** finish OLED status output · add a confidence/abstain threshold for out-of-distribution
-windows · session-grouped CV · CRC-framed UART telemetry · pinned training environment for
-reproducible model export.
-
-> **📷 {IMAGE: OLED mockups / final demo — the four condition screens (Healthy / Bearing Fault / Imbalance / Transient Shock) and/or the running system with the OLED showing a live result.}**
+**Roadmap:** wire up the OLED busy-flag guard · move OLED DMA completion off the busy-wait ·
+add a confidence/abstain threshold for out-of-distribution windows · session-grouped CV ·
+CRC-framed UART telemetry · pinned training environment for reproducible model export.
 
 ---
 
 ## 🧠 11. Skills Demonstrated
 
-**Embedded:** bare-metal STM32 register programming · I²C + DMA + UART + EXTI · FreeRTOS
-(tasks, queues, ISR-safe notifications, correct syscall-priority configuration) · zero-copy
-ping-pong buffering · FPU enablement.
+**Embedded:** bare-metal STM32 register programming · I²C + DMA + UART + EXTI · dual
+independent I²C buses (sensor + display) · hand-rolled SSD1306 driver (bit-banged command
+phase, DMA-flushed framebuffer) · FreeRTOS (tasks, queues, ISR-safe notifications, correct
+syscall-priority configuration) · zero-copy ping-pong buffering · FPU enablement.
 **DSP:** windowing · de-meaning · variance/RMS/PtP · CMSIS-DSP real FFT · spectral features.
 **Edge AI / ML:** feature engineering · Random Forest training & tuning · deployment-constrained
 model selection · C-code model export (`emlearn`) · Python↔MCU parity validation · domain-shift analysis.
@@ -463,8 +460,8 @@ model selection · C-code model export (`emlearn`) · Python↔MCU parity valida
 
 ## 📜 12. License & Acknowledgements
 
-- Hand-written firmware, notebooks, and dataset: © the author — *add a LICENSE file (e.g. MIT).*
+- Hand-written firmware, notebooks, and dataset: © the author — **Shaurya Singh (IIST ECE'28)**
 - Vendored third-party code retains its own license: **ARM CMSIS / CMSIS-DSP** (Apache-2.0),
   **FreeRTOS** (MIT), **emlearn** (MIT).
 
-> **📷 {IMAGE: Final demo — the complete running system, motor spinning, OLED/serial showing the detected condition.}**
+> **📷 {IMAGE: Final demo — the complete running system, motor spinning, OLED showing the detected condition.}**
