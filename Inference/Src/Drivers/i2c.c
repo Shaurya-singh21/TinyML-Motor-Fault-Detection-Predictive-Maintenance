@@ -12,53 +12,89 @@ static inline int i2c_wait_sr1(uint32_t mask, uint32_t timeout)
 	return 0;
 }
 
-void i2c2_oled_init(void)
+void i2c3_oled_init(void)
 {
-	GPIOB->MODER &= ~(GPIO_MODER_MODER10 | GPIO_MODER_MODER11);
-	GPIOB->MODER |= (1U << GPIO_MODER_MODER10_Pos) | (1U << GPIO_MODER_MODER11_Pos);
-	GPIOB->OTYPER |= (GPIO_OTYPER_OT_10 | GPIO_OTYPER_OT_11); // Open Drain
+	I2C3->CR1 &= ~I2C_CR1_PE;
 
-	// Toggle SCL (PB10) and SDA (PB11) to generate a manual STOP condition
-	GPIOB->BSRR = GPIO_BSRR_BS10 | GPIO_BSRR_BS11;
-	for (volatile int i = 0; i < 1000; i++)
-		;
-	GPIOB->BSRR = GPIO_BSRR_BR11; // SDA Low
-	for (volatile int i = 0; i < 1000; i++)
-		;
-	GPIOB->BSRR = GPIO_BSRR_BR10; // SCL Low
-	for (volatile int i = 0; i < 1000; i++)
-		;
-	GPIOB->BSRR = GPIO_BSRR_BS10; // SCL High
-	for (volatile int i = 0; i < 1000; i++)
-		;
-	GPIOB->BSRR = GPIO_BSRR_BS11; // SDA High
+	// 2. Drive PA8 (SCL) / PC9 (SDA) as plain open-drain outputs first, so we
+	GPIOA->MODER &= ~GPIO_MODER_MODER8;
+	GPIOA->MODER |= (1U << GPIO_MODER_MODER8_Pos);
+	GPIOA->OTYPER |= GPIO_OTYPER_OT_8;
+	GPIOA->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR8;
+
+	GPIOC->MODER &= ~GPIO_MODER_MODER9;
+	GPIOC->MODER |= (1U << GPIO_MODER_MODER9_Pos);
+	GPIOC->OTYPER |= GPIO_OTYPER_OT_9;
+	GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR9;
+
+	// 3. Manual STOP condition toggle (same recovery sequence as i2c_init)
+	GPIOA->BSRR = GPIO_BSRR_BS8; // SCL High
+	GPIOC->BSRR = GPIO_BSRR_BS9; // SDA High
 	for (volatile int i = 0; i < 1000; i++)
 		;
 
-	// 2. Switch to Alternate Function (Hardware I2C control)
-	GPIOB->MODER &= ~(GPIO_MODER_MODER10 | GPIO_MODER_MODER11);
-	GPIOB->MODER |= (2U << GPIO_MODER_MODER10_Pos) | (2U << GPIO_MODER_MODER11_Pos);
-	GPIOB->OSPEEDR |= (GPIO_OSPEEDER_OSPEEDR10 | GPIO_OSPEEDER_OSPEEDR11);
-	GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10 | GPIO_PUPDR_PUPDR11);
-	GPIOB->AFR[1] &= ~(GPIO_AFRH_AFSEL10 | GPIO_AFRH_AFSEL11);
-	GPIOB->AFR[1] |= (4U << GPIO_AFRH_AFSEL10_Pos) | (4U << GPIO_AFRH_AFSEL11_Pos);
-
-	// 3. CRITICAL: Hardware Software Reset for I2C2 (Fixed copy-paste error)
-	I2C2->CR1 |= I2C_CR1_SWRST;
+	GPIOC->BSRR = GPIO_BSRR_BR9; // SDA Low
 	for (volatile int i = 0; i < 1000; i++)
 		;
-	I2C2->CR1 &= ~I2C_CR1_SWRST;
 
-	// 4. Configure Timings & Enable
-	I2C2->CR1 &= ~I2C_CR1_PE;
-	I2C2->CR2 = (16U << I2C_CR2_FREQ_Pos);
-	I2C2->CCR = I2C_CCR_FS | (13U << I2C_CCR_CCR_Pos);
-	I2C2->TRISE = (6U << I2C_TRISE_TRISE_Pos);
+	GPIOA->BSRR = GPIO_BSRR_BR8; // SCL Low
+	for (volatile int i = 0; i < 1000; i++)
+		;
 
-	I2C2->CR1 |= I2C_CR1_PE;
-	I2C2->CR2 |= I2C_CR2_DMAEN;
+	GPIOA->BSRR = GPIO_BSRR_BS8; // SCL High
+	for (volatile int i = 0; i < 1000; i++)
+		;
+
+	GPIOC->BSRR = GPIO_BSRR_BS9; // SDA High
+	for (volatile int i = 0; i < 1000; i++)
+		;
+
+	GPIOA->MODER &= ~GPIO_MODER_MODER8;
+	GPIOA->MODER |= (2U << GPIO_MODER_MODER8_Pos);
+	GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR8;
+	GPIOA->PUPDR |= (1U << GPIO_PUPDR_PUPD8_Pos);
+	GPIOA->AFR[1] &= ~GPIO_AFRH_AFSEL8;
+	GPIOA->AFR[1] |= (4U << GPIO_AFRH_AFSEL8_Pos);
+
+	GPIOC->MODER &= ~GPIO_MODER_MODER9;
+	GPIOC->MODER |= (2U << GPIO_MODER_MODER9_Pos);
+	GPIOC->PUPDR &= ~GPIO_PUPDR_PUPDR9;
+	GPIOC->PUPDR |= (1U << GPIO_PUPDR_PUPD9_Pos);
+	GPIOC->AFR[1] &= ~GPIO_AFRH_AFSEL9;
+	GPIOC->AFR[1] |= (4U << GPIO_AFRH_AFSEL9_Pos);
+
+	// 5. SWRST Toggle
+	I2C3->CR1 |= I2C_CR1_SWRST;
+	for (volatile int i = 0; i < 100; i++)
+		;
+	I2C3->CR1 &= ~I2C_CR1_SWRST;
+
+	// 6. Configure Timings (APB1 is 16MHz: no PLL, running on HSI)
+	//    Fast mode 400kHz: CCR = 16MHz / (400kHz * 3) = 13, TRISE = 300ns*16MHz+1 = 6
+	I2C3->CR2 = (16U << I2C_CR2_FREQ_Pos);
+	I2C3->CCR = I2C_CCR_FS | (13U << I2C_CCR_CCR_Pos);
+	I2C3->TRISE = (6U << I2C_TRISE_TRISE_Pos);
+	I2C3->CR2 |= I2C_CR2_ITERREN;
+	NVIC_SetPriority(I2C3_ER_IRQn, I2C3_ERROR_PRIORITY);
+	NVIC_EnableIRQ(I2C3_ER_IRQn);
+
+	I2C3->CR1 |= I2C_CR1_PE;
 }
-volatile uint8_t stp = 0;
+
+void I2C3_ER_IRQHandler(void)
+{
+	uint32_t sr1 = I2C3->SR1;
+	if (sr1 & (I2C_SR1_AF | I2C_SR1_ARLO | I2C_SR1_BERR | I2C_SR1_OVR))
+	{
+		I2C3->SR1 &= ~(I2C_SR1_AF | I2C_SR1_ARLO | I2C_SR1_BERR | I2C_SR1_OVR);
+		I2C3->CR2 &= ~I2C_CR2_DMAEN;
+		DMA1_Stream4->CR &= ~DMA_SxCR_EN;
+		I2C3->CR1 |= I2C_CR1_STOP;
+		oled_dma_complete(); // un-wedges dma_busy — this is the fix your symptom needs
+	}
+}
+
+// volatile uint8_t stp = 0;
 
 void i2c_init(void)
 {

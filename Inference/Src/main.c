@@ -1,6 +1,5 @@
 #include "stm32f446xx.h"
 #include "main.h"
-#include "stdint.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "rf_model.h"
@@ -15,8 +14,24 @@
 #include "string.h"
 #include "ssd1306.h"
 #include "math.h"
+#include "stdio.h"
 const char *class_labels[4] = {"Bearing Fault", "Healthy", "Imbalance",
 							   "Transient Shock"};
+const float freq_resolution = 1000.0f / (float)SAMPLES_PER_BUFFER;
+typedef struct __attribute__((packed))
+{
+	float features[FEATURE_SIZE];
+	int32_t prediction;
+	int32_t maj_vote_prediction;
+} FinalInference_t;
+
+typedef struct __attribute__((packed))
+{
+	float confidence;
+	int32_t idx;
+	float PTP_Z;
+	float RMS_Z;
+} DisplayPacket_t;
 
 void welcome_message(void)
 {
@@ -26,7 +41,7 @@ void welcome_message(void)
 	oled_print(0, 2, "  DETECTION SYSTEM  ");
 	oled_print(0, 3, "====================");
 	oled_print(0, 4, "Press Button To Start");
-	oled_print(0, 6, "     OR stop sys     ");
+	oled_print(0, 6, "     OR Stop System     ");
 	oled_flush();
 }
 
@@ -48,6 +63,7 @@ TaskHandle_t xProcessDataHandle = NULL;
 QueueHandle_t xLoggingQueue = NULL;
 QueueHandle_t xBufferPtrQueueHandle = NULL;
 QueueHandle_t xFeatureQueueHandle = NULL;
+QueueHandle_t xDisplayQueueHandle = NULL;
 
 void UART_DMA_Send(const void *data, uint16_t length)
 {
@@ -72,8 +88,11 @@ void vStartStopSys(void *pvParameters)
 			power = 0;
 			GPIOA->BSRR = GPIO_BSRR_BR3;
 			GPIOA->BSRR = GPIO_BSRR_BR5;
-			GPIOA->BSRR = GPIO_BSRR_BR8;
+			GPIOA->BSRR = GPIO_BSRR_BR9;
 			NVIC_DisableIRQ(EXTI9_5_IRQn);
+			welcome_message();
+			while (DMA1_Stream4->CR & DMA_SxCR_EN)
+				;
 		}
 		else
 		{
@@ -81,7 +100,13 @@ void vStartStopSys(void *pvParameters)
 			sample_count = 0;
 			current_dma_buffer = bufferA;
 			GPIOA->BSRR = GPIO_BSRR_BS3;
-			GPIOA->BSRR = GPIO_BSRR_BS8;
+			GPIOA->BSRR = GPIO_BSRR_BS9;
+			oled_clear();
+			oled_print(0, 0, "MOTOR FAULT DETECTION");
+			oled_print(0, 2, "   Collecting Data...   ");
+			oled_flush();
+			while (DMA1_Stream4->CR & DMA_SxCR_EN)
+				;
 			NVIC_EnableIRQ(EXTI9_5_IRQn);
 		}
 	}
@@ -213,9 +238,9 @@ void vProcessData(void *pvParameters)
 		arm_max_f32(mag_x, SAMPLES_PER_BUFFER / 2 + 1, &fft_max_x, &dom_x);
 		arm_max_f32(mag_y, SAMPLES_PER_BUFFER / 2 + 1, &fft_max_y, &dom_y);
 		arm_max_f32(mag_z, SAMPLES_PER_BUFFER / 2 + 1, &fft_max_z, &dom_z);
-		features[9] = (float)dom_x;
-		features[10] = (float)dom_y;
-		features[11] = (float)dom_z;
+		features[9] = (float)(dom_x);
+		features[10] = (float)(dom_y);
+		features[11] = (float)(dom_z);
 
 		// find spectraL_crest
 		float spectral_crest_x, spectral_crest_y, spectral_crest_z;
@@ -235,20 +260,9 @@ void vProcessData(void *pvParameters)
 // static int32_t final_pred[10] = { 0 };
 static uint8_t final_pred_sum[4] = {0};
 uint8_t cnt = 0;
-typedef struct __attribute__((packed))
-{
-	float features[FEATURE_SIZE];
-	int32_t prediction;
-	int32_t maj_vote_prediction;
-} FinalInference_t;
-
-typedef struct __attribute__((packed))
-{
-	char pred_string[16];
-	float confidence;
-} FinalOled_t;
 
 static FinalInference_t packets_to_send;
+static DisplayPacket_t packets_to_display;
 void vRunInference(void *pvParameters)
 {
 	for (;;)
@@ -281,10 +295,13 @@ void vRunInference(void *pvParameters)
 			xQueueSendToBack(xLoggingQueue, &packets_to_send, 0);
 			if (cnt >= 10)
 			{
-				// sent to oled queue
-				float confidence = (final_pred_sum[max_index] * 100) / (float)OUTPUT_SIZE;
+				packets_to_display.idx = (int32_t)max_index;
+				packets_to_display.PTP_Z = received_feature_buffer[8];
+				packets_to_display.RMS_Z = received_feature_buffer[5];
+				packets_to_display.confidence = (final_pred_sum[max_index] * 100) / 10.0f;
 				memset(final_pred_sum, 0, sizeof(final_pred_sum));
 				cnt = 0;
+				xQueueSendToBack(xDisplayQueueHandle, &packets_to_display, 0);
 			}
 		}
 	}
@@ -302,6 +319,29 @@ void vSend_via_UART(void *pvParameters)
 	}
 }
 
+static DisplayPacket_t disp_rx_packet;
+void vDisplayTask(void *pvParameters)
+{
+	for (;;)
+	{
+		if (xQueueReceive(xDisplayQueueHandle, &disp_rx_packet, portMAX_DELAY) == pdTRUE)
+		{
+			char line[30];
+			oled_clear();
+			oled_print(0, 0, "MOTOR FAULT DETECTION");
+			snprintf(line, sizeof(line), "STATE: %s", class_labels[disp_rx_packet.idx]);
+			oled_print(0, 2, line);
+			snprintf(line, sizeof(line), "Conf: %.3f%%", (disp_rx_packet.confidence));
+			oled_print(0, 3, line);
+			snprintf(line, sizeof(line), "PTP_Z: %.3f", (disp_rx_packet.PTP_Z));
+			oled_print(0, 5, line);
+			snprintf(line, sizeof(line), "RMS_Z: %.3f", (disp_rx_packet.RMS_Z));
+			oled_print(0, 6, line);
+			oled_flush();
+		}
+	}
+}
+
 int main(void)
 {
 	SCB->CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2));
@@ -310,15 +350,15 @@ int main(void)
 	uart_init();
 	i2c_init();
 	MPU6050_Init();
-	//	i2c2_oled_init();
+	i2c3_oled_init();
 	dma_init();
-	//	oled_init();
-	//	oled_clear();
-
-	//	welcome_message();
+	oled_init();
+	oled_clear();
+	welcome_message();
 	xBufferPtrQueueHandle = xQueueCreate(2, sizeof(uint32_t *));
 	xFeatureQueueHandle = xQueueCreate(2, sizeof(features));
 	xLoggingQueue = xQueueCreate(2, sizeof(FinalInference_t));
+	xDisplayQueueHandle = xQueueCreate(2, sizeof(DisplayPacket_t));
 	xTaskCreate(vStartStopSys, "StartStopSys", 64, NULL, SYS_START_TASK,
 				&xStartStopSysHandle);
 
@@ -335,7 +375,10 @@ int main(void)
 	{
 		xTaskCreate(vRunInference, "FindPred", 512, NULL, INFERENCE_TASK, NULL);
 	}
-
+	if (xDisplayQueueHandle != NULL)
+	{
+		xTaskCreate(vDisplayTask, "Display_Task", 512, NULL, DISPLAY_TASK, NULL);
+	}
 	vTaskStartScheduler();
 
 	for (;;)
