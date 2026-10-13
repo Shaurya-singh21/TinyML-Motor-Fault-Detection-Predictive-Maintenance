@@ -305,11 +305,12 @@ Despite running on a low-power 16 MHz clock, the non-blocking RTOS architecture 
 
 Compiled via `arm-none-eabi-gcc` (`-O0`), explicitly linking only required CMSIS-DSP FFT tables to compress the firmware footprint.
 
-| Memory Region                                                         | Allocation | Utilization        | Notes                                                                   |
-| :-------------------------------------------------------------------- | :--------- | :----------------- | :---------------------------------------------------------------------- |
-| **Flash (ROM)**                                                       | 512 KB     | ~390.25 KB (76.2%) | ~336 KB consumed strictly by the ML decision trees.                     |
-| **SRAM (RAM)**                                                        | 128 KB     | ~37.59 KB (29.4%)  | Statically allocated FreeRTOS tasks and queues; strictly deterministic. |
-| ![Section-wise Flash and SRAM Breakdown](assets/memory_footprint.png) |
+| Memory Region | Allocation | Utilization | Notes |
+| :--- | :--- | :--- | :--- |
+| **Flash (ROM)** | 512 KB | ~390.25 KB (76.2%) | ~336 KB consumed strictly by the ML decision trees. |
+| **SRAM (RAM)** | 128 KB | ~37.59 KB (29.4%) | Statically allocated FreeRTOS tasks and queues; strictly deterministic. |
+
+![Section-wise Flash and SRAM Breakdown](assets/memory_footprint.png)
 
 **Task Stack Profiling (Empirical Peak Usage):**
 
