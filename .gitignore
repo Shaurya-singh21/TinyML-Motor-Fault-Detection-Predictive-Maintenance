@@ -1,6 +1,8 @@
+.cproject
+.env
+.project
 .settings
 Debug
-Release
-.env
 Motor_Fault Debug.launch
 Motor_Fault_Detection Debug.launch
+Release
