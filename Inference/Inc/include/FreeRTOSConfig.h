@@ -23,7 +23,9 @@
 #define configUSE_TRACE_FACILITY                0
 #define configGENERATE_RUN_TIME_STATS           0
 #define configUSE_TASK_NOTIFICATIONS            1
+#define configSUPPORT_DYNAMIC_ALLOCATION       1
 #define configTASK_NOTIFICATION_ARRAY_ENTRIES   1
+#define configSUPPORT_STATIC_ALLOCATION    1
 /* configASSERT: without this, a failed FreeRTOS internal assertion just
    silently does nothing in some ports, or hard-faults with zero context.
    This traps it at the point of failure so you can actually debug it. */

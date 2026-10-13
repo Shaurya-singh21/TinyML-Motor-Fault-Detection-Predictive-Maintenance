@@ -1,7 +1,7 @@
 #include "ssd1306.h"
 #include "stm32f446xx.h"
 #include <string.h>
-
+#include "main.h"
 static uint8_t fb[1 + OLED_W * OLED_PAGES];
 static volatile uint8_t dma_busy = 0;
 
@@ -10,6 +10,9 @@ static const uint8_t font[][5] = {{0x00, 0x00, 0x00, 0x00, 0x00}, {0x00, 0x00, 0
 
 int oled_cmd(uint8_t cmd)
 {
+	#if USE_SYNTHETIC_DATA == 1
+    return 0; // MOCK: Instantly bypass I2C hardware polling to prevent hang
+#endif
 	uint32_t t;
 	OLED_I2C->CR1 |= I2C_CR1_PE;
 	OLED_I2C->CR1 &= ~(I2C_CR1_START | I2C_CR1_STOP);
@@ -169,7 +172,9 @@ void oled_dma_complete(void)
 
 void oled_flush(void)
 {
-
+	#if USE_SYNTHETIC_DATA == 1
+    return; // MOCK: Instantly bypass I2C hardware polling to prevent hang
+#endif
 	if (oled_cmd(0x21) < 0)
 		goto fail;
 	if (oled_cmd(0x00) < 0)
