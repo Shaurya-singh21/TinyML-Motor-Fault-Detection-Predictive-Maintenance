@@ -32,15 +32,15 @@ Live status is shown on an onboard SSD1306 OLED and mirrored over UART.
 
 ### 📊 At a glance
 
-| | |
-|---|---|
-| **Target** | STM32F446RE (Cortex-M4F @ 16 MHz HSI) |
-| **Sensor** | MPU6050, ±2 g, 1 kHz, DLPF 42 Hz |
-| **Window** | 128 samples → 128 ms → 128-pt real FFT (65 bins, Δf = 7.8125 Hz) |
-| **Features** | 15 (Variance, RMS, Peak-to-Peak, Dominant FFT bin, Spectral Crest × X/Y/Z) |
-| **Model** | Random Forest — 70 trees, depth 11, exported to C via `emlearn` |
-| **Held-out test** | 0.937 accuracy · 0.936 macro-F1 (4 classes) |
-| **Dataset** | 17,731 labeled feature windows |
+|                   |                                                                            |
+| ----------------- | -------------------------------------------------------------------------- |
+| **Target**        | STM32F446RE (Cortex-M4F @ 16 MHz HSI)                                      |
+| **Sensor**        | MPU6050, ±2 g, 1 kHz, DLPF 42 Hz                                           |
+| **Window**        | 128 samples → 128 ms → 128-pt real FFT (65 bins, Δf = 7.8125 Hz)           |
+| **Features**      | 15 (Variance, RMS, Peak-to-Peak, Dominant FFT bin, Spectral Crest × X/Y/Z) |
+| **Model**         | Random Forest — 70 trees, depth 11, exported to C via `emlearn`            |
+| **Held-out test** | 0.937 accuracy · 0.936 macro-F1 (4 classes)                                |
+| **Dataset**       | 17,731 labeled feature windows                                             |
 
 ---
 
@@ -50,14 +50,15 @@ Live status is shown on an onboard SSD1306 OLED and mirrored over UART.
 2. [Hardware & Wiring](#-2-hardware--wiring)
 3. [How It Works](#-3-how-it-works)
 4. [Results](#-4-results)
-5. [Real-World Insight: Mounting-Induced Domain Shift](#-5-real-world-insight-mounting-induced-domain-shift)
-6. [Engineering Deep-Dives](#-6-engineering-deep-dives)
-7. [Repository Structure](#-7-repository-structure)
-8. [Build & Flash](#-8-build--flash)
-9. [Reproducibility](#-9-reproducibility)
-10. [Limitations & Future Work](#-10-limitations--future-work)
-11. [Skills Demonstrated](#-11-skills-demonstrated)
-12. [License & Acknowledgements](#-12-license--acknowledgements)
+5. [Hardware Performance Profiling](#-5-hardware-performance-profiling)
+6. [Real-World Insight: Mounting-Induced Domain Shift](#-6-real-world-insight-mounting-induced-domain-shift)
+7. [Engineering Deep-Dives](#-7-engineering-deep-dives)
+8. [Repository Structure](#-8-repository-structure)
+9. [Build & Flash](#-9-build--flash)
+10. [Reproducibility](#-10-reproducibility)
+11. [Limitations & Future Work](#-11-limitations--future-work)
+12. [Skills Demonstrated](#-12-skills-demonstrated)
+13. [License & Acknowledgements](#-13-license--acknowledgements)
 
 ---
 
@@ -79,32 +80,31 @@ back-pressured and testable.
 
 ### Bill of materials
 
-| Component | Role |
-|---|---|
-| STM32F446RE (Nucleo-64) | Main MCU — acquisition, DSP, inference |
-| MPU6050 | 3-axis accelerometer (I²C) |
-| SSD1306 OLED (128×64, I²C) | On-device status display |
-| Motor / fan under test | Machine being monitored |
-| USB–UART (ST-Link VCP) | Data collection, telemetry, debugging |
+| Component                  | Role                                   |
+| -------------------------- | -------------------------------------- |
+| STM32F446RE (Nucleo-64)    | Main MCU — acquisition, DSP, inference |
+| MPU6050                    | 3-axis accelerometer (I²C)             |
+| SSD1306 OLED (128×64, I²C) | On-device status display               |
+| Motor / fan under test     | Machine being monitored                |
+| USB–UART (ST-Link VCP)     | Data collection, telemetry, debugging  |
 
-### Pin map *(extracted from firmware — authoritative)*
+### Pin map _(extracted from firmware — authoritative)_
 
-| Signal | Pin | Peripheral / AF | Notes |
-|---|---|---|---|
-| MPU6050 **SCL** | `PB8` | I²C1_SCL (AF4) | ~400 kHz fast mode |
-| MPU6050 **SDA** | `PB9` | I²C1_SDA (AF4) | open-drain |
-| MPU6050 **INT** | `PB5` | EXTI9_5, input pull-down, **rising** edge | data-ready trigger |
-| OLED **SCL** | `PA8` | I²C3_SCL (AF4) | ~400 kHz fast mode |
-| OLED **SDA** | `PC9` | I²C3_SDA (AF4) | open-drain |
-| UART **TX** | `PA2` | USART2_TX (AF7) | 115200 8N1, via DMA1_S6 |
-| User **button** | `PC13` | EXTI15_10, **falling** edge | start / stop acquisition |
-| **Motor enable** | `PA9` | GPIO output | toggled in `vStartStopSys` (`BS9`/`BR9`) |
-| Status LED | `PA5` | GPIO output | buffer / heartbeat toggle on each DMA1_Stream0 completion |
+| Signal           | Pin    | Peripheral / AF                           | Notes                                                     |
+| ---------------- | ------ | ----------------------------------------- | --------------------------------------------------------- |
+| MPU6050 **SCL**  | `PB8`  | I²C1_SCL (AF4)                            | ~400 kHz fast mode                                        |
+| MPU6050 **SDA**  | `PB9`  | I²C1_SDA (AF4)                            | open-drain                                                |
+| MPU6050 **INT**  | `PB5`  | EXTI9_5, input pull-down, **rising** edge | data-ready trigger                                        |
+| OLED **SCL**     | `PA8`  | I²C3_SCL (AF4)                            | ~400 kHz fast mode                                        |
+| OLED **SDA**     | `PC9`  | I²C3_SDA (AF4)                            | open-drain                                                |
+| UART **TX**      | `PA2`  | USART2_TX (AF7)                           | 115200 8N1, via DMA1_S6                                   |
+| User **button**  | `PC13` | EXTI15_10, **falling** edge               | start / stop acquisition                                  |
+| **Motor enable** | `PA9`  | GPIO output                               | toggled in `vStartStopSys` (`BS9`/`BR9`)                  |
+| Status LED       | `PA5`  | GPIO output                               | buffer / heartbeat toggle on each DMA1_Stream0 completion |
 
 - **MPU6050 I²C address:** `0x68` (write `0xD0`, read `0xD1`)
 - **OLED I²C address:** set via `OLED_ADDR` in `ssd1306.h` (not included in this update — confirm it matches your module, typically `0x3C` or `0x3D`)
 - **DMA map:** `DMA1_Stream0 Ch1` = I²C1-RX (sensor) · `DMA1_Stream4 Ch3` = I²C3-TX (OLED) · `DMA1_Stream6 Ch4` = USART2-TX (telemetry)
-
 
 > ![alt text](assets/wiring.jpeg)
 
@@ -143,12 +143,12 @@ Each 128-sample, 3-axis window is **de-meaned per axis** (removing the gravity/D
 that depends on sensor orientation), then reduced to 15 features. Feature order is fixed and
 identical between Python and firmware.
 
-| # | Feature (× X/Y/Z) | Captures |
-|---|---|---|
-| 1–3 | **Variance** | Vibration energy / mechanical stability |
-| 4–6 | **RMS** | Average vibration magnitude |
-| 7–9 | **Peak-to-Peak** | Shock / displacement amplitude |
-| 10–12 | **Dominant FFT bin** | Where spectral energy concentrates (bin `k` → `k × 7.8125 Hz`) |
+| #     | Feature (× X/Y/Z)         | Captures                                                                                  |
+| ----- | ------------------------- | ----------------------------------------------------------------------------------------- |
+| 1–3   | **Variance**              | Vibration energy / mechanical stability                                                   |
+| 4–6   | **RMS**                   | Average vibration magnitude                                                               |
+| 7–9   | **Peak-to-Peak**          | Shock / displacement amplitude                                                            |
+| 10–12 | **Dominant FFT bin**      | Where spectral energy concentrates (bin `k` → `k × 7.8125 Hz`)                            |
 | 13–15 | **Spectral Crest Factor** | Peak-to-mean ratio in frequency domain — separates sharp impacts from broadband vibration |
 
 <details>
@@ -197,7 +197,7 @@ RandomForestClassifier(n_estimators=70, max_depth=11,
 
 The model is exported to C with [`emlearn`](https://github.com/emlearn/emlearn)
 (`method='inline'`), producing `rf_model.h` with a `rf_model_predict()` that the firmware
-calls directly. *(Actual flash footprint is measured from the linker `.map` — see [§8](#-8-build--flash).)*
+calls directly. _(Actual flash footprint is measured from the linker `.map` — see [§8](#-8-build--flash).)_
 
 ### 3.4 On-device inference & majority voting
 
@@ -222,20 +222,16 @@ PC reconstruct the exact on-device feature vector and predictions for validation
 
 ```c
 typedef struct __attribute__((packed)) {
-    float   features[15];      // 60 B — the on-device feature vector
-    int32_t prediction;        //  4 B — per-window class
-    int32_t maj_vote_prediction; // 4 B — stabilized class
-} FinalInference_t;            // = 68 B
+    float features[FEATURE_SIZE];
+    int32_t prediction;
+    int32_t maj_vote_prediction;
+    uint32_t feature_cycles;
+    uint32_t rf_cycles;
+    uint32_t window_cost_pct_x100;  // 12.34% is sent as 1234
+} FinalInference_t;     //= 80 B
 ```
 
-```python
-raw = ser.read(68)
-features   = np.frombuffer(raw[:60],  dtype="<f4")
-prediction = np.frombuffer(raw[60:64], dtype="<i4")[0]
-majority   = np.frombuffer(raw[64:68], dtype="<i4")[0]
-```
-
-> >![alt text](assets/uart.png)
+> > ![alt text](assets/uart.png)
 
 ### 3.6 OLED status display
 
@@ -259,7 +255,7 @@ font, then flushes the frame over a **second, independent I²C bus (I²C3)** via
 and error states (`welcome_message()`, `show_Ack_failure()`) use the same framebuffer/flush
 path before the RTOS scheduler or acquisition even starts.
 
->![alt text](assets/class.jpeg)
+> ![alt text](assets/class.jpeg)
 
 ---
 
@@ -267,17 +263,17 @@ path before the RTOS scheduler or acquisition even starts.
 
 **Offline evaluation** on a held-out stratified test split (30%, 5,320 windows):
 
-| Metric | Train | Test |
-|---|---|---|
+| Metric   | Train | Test      |
+| -------- | ----- | --------- |
 | Accuracy | 0.959 | **0.937** |
 | Macro-F1 | 0.957 | **0.936** |
 
-| Class | Precision | Recall | F1 | Support |
-|---|---|---|---|---|
-| Bearing_Fault | 0.92 | 0.92 | 0.92 | 1401 |
-| Healthy | 0.89 | 0.94 | 0.91 | 1403 |
-| Imbalance | 1.00 | 1.00 | 1.00 | 1406 |
-| Transient_Shock | 0.94 | 0.88 | 0.91 | 1110 |
+| Class           | Precision | Recall | F1   | Support |
+| --------------- | --------- | ------ | ---- | ------- |
+| Bearing_Fault   | 0.92      | 0.92   | 0.92 | 1401    |
+| Healthy         | 0.89      | 0.94   | 0.91 | 1403    |
+| Imbalance       | 1.00      | 1.00   | 1.00 | 1406    |
+| Transient_Shock | 0.94      | 0.88   | 0.91 | 1110    |
 
 - **`Imbalance` separates almost perfectly** — high variance, PtP, and spectral crest set it far apart from the rest.
 - **Remaining confusion is `Bearing_Fault`/`Transient_Shock` vs `Healthy`** — i.e. missed-fault errors rather than false alarms — because those classes overlap with `Healthy` on window-averaged statistics and lean on the weaker spectral-crest signal.
@@ -285,41 +281,101 @@ path before the RTOS scheduler or acquisition even starts.
 **On-device consistency check:** running identical feature windows through the offline
 scikit-learn model and the on-device `emlearn` C model, predictions agreed on **~993 / 1000**
 windows — evidence that the C port faithfully reproduces the trained model, which cleanly
-separates *implementation* bugs from *real* changes in the incoming vibration data.
+separates _implementation_ bugs from _real_ changes in the incoming vibration data.
 
 > **go to /ML/process_data.ipynb for boxplots and detailed comparison between features.**
 
 ---
 
-## 🔬 5. Real-World Insight: Mounting-Induced Domain Shift
+## 📊 5. Hardware Performance Profiling
+
+The system was heavily profiled using Cortex-M4 Data Watchpoint and Trace (DWT) cycle counting and FreeRTOS memory watermarking to prove real-time viability.
+
+### Execution Latency (128 ms Window Budget)
+
+Despite running on a low-power 16 MHz clock, the non-blocking RTOS architecture and DSP hardware floating-point unit (FPU) allow the entire classification pipeline to execute in under 8 milliseconds. This leaves >93% of the CPU budget idle for power savings or additional system tasks.
+
+| Pipeline Stage                         | Avg. CPU Cycles | Execution Time | Budget Consumed |
+| :------------------------------------- | :-------------- | :------------- | :-------------- |
+| **CMSIS-DSP Feature Extraction**       | ~120,400        | 7.52 ms        | 5.88%           |
+| **Random Forest Inference (70 trees)** | ~7,400          | 0.46 ms        | 0.36%           |
+| **Total System Latency**               | **~127,800**    | **7.98 ms**    | **~6.24%**      |
+
+### Memory Footprint
+
+Compiled via `arm-none-eabi-gcc` (`-O0`), explicitly linking only required CMSIS-DSP FFT tables to compress the firmware footprint.
+
+| Memory Region                                                         | Allocation | Utilization        | Notes                                                                   |
+| :-------------------------------------------------------------------- | :--------- | :----------------- | :---------------------------------------------------------------------- |
+| **Flash (ROM)**                                                       | 512 KB     | ~390.25 KB (76.2%) | ~336 KB consumed strictly by the ML decision trees.                     |
+| **SRAM (RAM)**                                                        | 128 KB     | ~37.59 KB (29.4%)  | Statically allocated FreeRTOS tasks and queues; strictly deterministic. |
+| ![Section-wise Flash and SRAM Breakdown](assets/memory_footprint.png) |
+
+**Task Stack Profiling (Empirical Peak Usage):**
+
+- **ProcessData Task:** 256 words allocated | 141 words unused
+- **Inference Task:** 256 words allocated | 169 words unused
+- **StartStopSys Task:** 128 words allocated | 88 words unused
+- **UART TX Task:** 128 words allocated | 86 words unused
+- **Display Task:** 128 words allocated | 61 words unused
+
+_(Note: The FreeRTOS heap uses a 20 KB array, but hardware profiling verifies 19,824 bytes remain permanently unused due to full static task/queue allocation. The dynamic footprint is only 656 bytes)._
+
+<details>
+<summary><b>🔍 View Raw UART Telemetry & Profiling Proof</b></summary>
+
+```text
+Features: [4.8806141e-03 1.8458004e-03 9.5463922e-04 6.9861390e-02 ...]
+Prediction: 3
+Majority: 1
+Feature extraction: 120388 cycles
+RF inference: 7504 cycles
+Total: 127892 cycles
+128 ms window budget used: 6.24%
+----------------------------------------
+Features: [5.1828860e-03 1.9769252e-03 1.0209865e-03 7.1992263e-02 ...]
+Prediction: 1
+Majority: 1
+Feature extraction: 120161 cycles
+RF inference: 7829 cycles
+Total: 127990 cycles
+128 ms window budget used: 6.24%
+----------------------------------------
+=== MEMORY REPORT ===
+Min Free Heap:   19824 bytes
+StartStop Stack: 88 words unused
+Process Stack:   141 words unused
+Inference Stack: 169 words unused
+UART Stack:      86 words unused
+Display Stack:   61 words unused
+```
+
+</details>
+
+---
+
+## 🔬 6. Real-World Insight: Mounting-Induced Domain Shift
 
 A genuinely instructive finding: after a mechanical mounting change (glue removed from the
 sides, slight sensor re-orientation), the **Healthy** vibration distribution shifted
 measurably even though the motor looked fine to the eye:
 
-| Feature | Training Healthy | New live | ≈ Change |
-|---|---|---|---|
-| Variance Z | 2.28e-04 | 8.60e-04 | ~3.8× |
-| RMS Z | 0.0151 | 0.0293 | ~1.9× |
-| PtP Z | 0.0764 | 0.1351 | ~1.8× |
+| Feature    | Training Healthy | New live | ≈ Change |
+| ---------- | ---------------- | -------- | -------- |
+| Variance Z | 2.28e-04         | 8.60e-04 | ~3.8×    |
+| RMS Z      | 0.0151           | 0.0293   | ~1.9×    |
+| PtP Z      | 0.0764           | 0.1351   | ~1.8×    |
 
 Because every window is de-meaned, static tilt/gravity is largely removed — so the amplitude
 shift points to **altered mechanical coupling**, not orientation. The takeaway (and a core
 lesson of vibration-based ML): **the sensor mounting is part of the measurement system**, and
-a classifier's "Healthy" is only the *distribution it was trained on*. If deployment mounting
+a classifier's "Healthy" is only the _distribution it was trained on_. If deployment mounting
 differs from training mounting, the Healthy set must be re-collected in the deployment
 configuration.
 
-```mermaid
-flowchart LR
-    A["Mounting changed"] --> B["Mechanical coupling changed"]
-    B --> C["Measured vibration changed"]
-    C --> D["Feature distribution shifted"]
-    D --> E["Predictions changed<br/>(domain shift, not a code bug)"]
-```
 ---
 
-## 🔧 6. Engineering Deep-Dives
+## 🔧 7. Engineering Deep-Dives
 
 <details>
 <summary><b>FFT initialization returned <code>ARM_MATH_ARGUMENT_ERROR</code></b></summary>
@@ -353,12 +409,12 @@ avoid out-of-bounds reads in `arm_max_f32`/`arm_mean_f32`.
 Not every wrong prediction is an ML problem. The triage order that worked: class mapping →
 feature ordering → numerical formulas → FFT init → buffer sizes → variance convention → raw
 sensor decode → Python-vs-MCU agreement → training-vs-live distribution → mechanical mounting.
-This is what let a *domain shift* be distinguished from a *software bug*.
+This is what let a _domain shift_ be distinguished from a _software bug_.
 </details>
 
 ---
 
-## 📂 7. Repository Structure
+## 📂 8. Repository Structure
 
 ```text
 Motor_Fault_Detection/
@@ -383,34 +439,34 @@ Motor_Fault_Detection/
 
 ---
 
-## 🚀 8. Build & Flash
+## 🚀 9. Build & Flash
 
 **Firmware (STM32CubeIDE)**
+
 1. `File → Import → Existing Projects into Workspace`, select `Data_Collection/` and/or `Inference/`.
-2. Ensure preprocessor symbols include the CMSIS-DSP FFT tables: **`ARM_ALL_FFT_TABLES`** (and `ARM_MATH_CM4`, `__FPU_PRESENT=1`).
+2. Ensure preprocessor symbols include the CMSIS-DSP FFT tables: **`ARM_ALL_FAST_TABLES`** (and `ARM_MATH_CM4`, `ARM_DSP_CONFIG_TABLES` , `__FPU_PRESENT=1`).
 3. Build (`Debug` or `Release`) and flash to the Nucleo via ST-Link.
-4. Check real flash/RAM usage in `Inference/<config>/*.map` (look at `.text` / `.bss`).
 
 **Python (training / validation)**
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install numpy pandas scipy scikit-learn matplotlib seaborn pyserial emlearn joblib python-dotenv
-# create a .env with:  port=/dev/ttyACM0   (and main_path=... for dataset building)
 jupyter notebook ML/process_data.ipynb
 ```
 
 ---
 
-## 🔁 9. Reproducibility
+## 🔁 10. Reproducibility
 
-| Parameter | Value | | Parameter | Value |
-|---|---|---|---|---|
-| Sampling rate | 1 kHz | | RF trees | 70 |
-| Window size | 128 samples (128 ms) | | Max depth | 11 |
-| FFT size / bins | 128 / 65 | | Max features | 6 |
-| Freq. resolution | 7.8125 Hz | | Min leaf samples | 8 |
-| Features | 15 | | `random_state` | 42 |
-| Accel range | ±2 g (16384 LSB/g) | | Test split | 30% stratified |
+| Parameter        | Value                |     | Parameter        | Value          |
+| ---------------- | -------------------- | --- | ---------------- | -------------- |
+| Sampling rate    | 1 kHz                |     | RF trees         | 70             |
+| Window size      | 128 samples (128 ms) |     | Max depth        | 11             |
+| FFT size / bins  | 128 / 65             |     | Max features     | 6              |
+| Freq. resolution | 7.8125 Hz            |     | Min leaf samples | 8              |
+| Features         | 15                   |     | `random_state`   | 42             |
+| Accel range      | ±2 g (16384 LSB/g)   |     | Test split       | 30% stratified |
 
 ---
 
@@ -418,7 +474,7 @@ jupyter notebook ML/process_data.ipynb
 
 - **Mounting dependency / domain shift** — the vibration signature depends on mechanical
   coupling; the model should be (re)trained in the deployment configuration.
-- **Validation split** — current metrics use a stratified *random* split over pooled windows.
+- **Validation split** — current metrics use a stratified _random_ split over pooled windows.
   Next step: **session-grouped cross-validation** (`GroupKFold` on recording session) to rule
   out window-level correlation between train and test and harden the generalization estimate.
 - **`Transient_Shock` recall** — the weakest class; needs more/harder examples and possibly
@@ -432,7 +488,7 @@ CRC-framed UART telemetry · pinned training environment for reproducible model 
 
 ---
 
-## 🧠 11. Skills Demonstrated
+## 🧠 12. Skills Demonstrated
 
 **Embedded:** bare-metal STM32 register programming · I²C + DMA + UART + EXTI · dual
 independent I²C buses (sensor + display) · hand-rolled SSD1306 driver (bit-banged command
@@ -444,9 +500,10 @@ model selection · C-code model export (`emlearn`) · Python↔MCU parity valida
 
 ---
 
-## 📜 12. License & Acknowledgements
+## 📜 13. License & Acknowledgements
 
 - Hand-written firmware, notebooks, and dataset: © the author — **Shaurya Singh (IIST ECE'28)**
 - Vendored third-party code retains its own license: **ARM CMSIS / CMSIS-DSP** (Apache-2.0),
   **FreeRTOS** (MIT), **emlearn** (MIT).
->![alt text](assets/hero_shot.jpeg) | ![alt text](assets/hero-fan.jpeg)
+
+> ![alt text](assets/hero_shot.jpeg) | ![alt text](assets/hero-fan.jpeg)
